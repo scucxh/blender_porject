@@ -304,6 +304,26 @@ def interpolate_motion(beta_from:np.ndarray, beta_to:np.ndarray, pose_from:np.nd
         poses[i] = pose_from * (1 - alpha) + pose_to * alpha
 
     return betas, poses
+
+def interpolate_motion_with_trans(beta_from:np.ndarray, beta_to:np.ndarray,
+                                  pose_from:np.ndarray, pose_to:np.ndarray,
+                                  trans_from:np.ndarray, trans_to:np.ndarray,
+                                  num_frames:int):
+    """
+    Interpolate betas, poses, and translation linearly over num_frames.
+    Returns (betas, poses, trans).
+    """
+    betas = np.zeros((num_frames, beta_from.shape[0]), dtype=np.float32)
+    poses = np.zeros((num_frames, pose_from.shape[0]), dtype=np.float32)
+    trans = np.zeros((num_frames, trans_from.shape[0]), dtype=np.float32)
+
+    for i in range(num_frames):
+        alpha = i / (num_frames - 1) if num_frames > 1 else 1.0
+        betas[i] = beta_from * (1 - alpha) + beta_to * alpha
+        poses[i] = pose_from * (1 - alpha) + pose_to * alpha
+        trans[i] = trans_from * (1 - alpha) + trans_to * alpha
+
+    return betas, poses, trans
 if __name__ == "__main__":
     item = read_hdf5("assets/cmu_snug_mini.h5", 2)
     print('item pose: {0}'.format(item['poses'].shape))
