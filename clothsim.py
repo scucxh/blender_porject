@@ -95,8 +95,8 @@ class SMPLModel():
         bshapes = np.concatenate([(mat_rot - np.eye(3)).ravel() for mat_rot in mat_rots[1:]])
         return (mat_rots, bshapes)
     
-    # Apply shape and pose to frame in blender
-    def apply_shape_pose(self, beta, pose, frame):
+    # Apply shape, pose, and optional translation to a specific frame in Blender
+    def apply_shape_pose(self, beta, pose, frame, trans=None):
         # set beta parameter ranges from -5 to 5
         for k in self.body.data.shape_keys.key_blocks.keys():
             self.body.data.shape_keys.key_blocks[k].slider_min = -10
@@ -106,14 +106,25 @@ class SMPLModel():
         mpose = np.zeros(shape=(self.n_bones, 3, 3), dtype=np.float32)
         pose = pose.reshape(-1, 3)
         _, bshapes = self.rodrigues2bshapes(pose)
+        
+        # Apply translation to the root (pelvis) if provided, otherwise reset to origin
+        try:
+            pelvis = self.armature.pose.bones[self.bone_name(0, bodyname=f'{self.gender}_avg')]
+            if trans is not None:
+                # Scale meters to Blender scale (armature scaled x100)
+                pelvis.location = (trans * 1.0).tolist()
+            else:
+                pelvis.location = [0.0, 0.0, 0.0]
+            pelvis.keyframe_insert('location', frame=frame)
+        except Exception as e:
+            print(f"Warning: failed to set pelvis translation at frame {frame}: {e}")
         for i, p in enumerate(pose):
-            if i <= 1:
-                continue
             mrot = self.rodrigues(p)
             mpose[i] = mrot
             bone = self.armature.pose.bones[self.bone_name(i, bodyname=f'{self.gender}_avg')]
-            if i == 0:
-                bone.location = [0, 0, 0]
+            # Skip rotation for root (0) and next joint (1) to preserve hierarchy as in original code
+            #if i <= 1:
+            #    continue
             bone.rotation_quaternion = Matrix(mrot).to_quaternion()
             bone.keyframe_insert('rotation_quaternion', frame=frame)
         for ibeta, val in enumerate(beta):
@@ -162,20 +173,23 @@ class SMPLModel():
         """
 
         #poses, betas, trans, trans_vel = load_motion(npz_data)  # SNUG implementation of loading motion data
-        animation =self.load_cmu(npz_data)
+        animation = self.load_cmu(npz_data)
         betas = animation['betas'][:10]  # shape parameters
         poses = animation['poses'][:,:72]  # pose parameters
         poses[:,66:72] = 0.0  # reset hand pose
+        trans = animation.get('trans', None)
 
-        #poses = self.load_cmu(npz_data)
         print('len poses: {0}'.format(poses.shape[0]))
-        # apply shape and pose to frame in blender
+        if trans is not None:
+            print('trans shape: {0}'.format(trans.shape))
+        # apply shape, pose, and translation (if available) to frames in Blender
         for i, p in enumerate(poses):
-            print(f"Applying shape and pose for frame {i}")
-            # apply shape and pose
-            self.apply_shape_pose(betas, p, frame=i+1)  # frame starts from 1 in Blender
+            if trans is not None:
+                self.apply_shape_pose(betas, p, frame=i+1, trans=trans[i])
+            else:
+                self.apply_shape_pose(betas, p, frame=i+1)
 
-    def simulate(self, pose_data:str, output_path:str):
+    def simulate(self, pose_data:str, output_path:str, trans=None):
         """
         Visualize and simulate the SMPLH pose data from an npz file in Blender.
         simulation settings:
@@ -183,57 +197,70 @@ class SMPLModel():
                 thickness is set to 0.1 m (1 mm in actual world due to scale)
         smpl body set collision quality to default
         """
-        # split pose data file name with '/' to get the npz file name
         npz_file_name = pose_data.split('/')[-1][:5]
         print(' npz file name: {0}'.format(npz_file_name))
-        animation = self.load_cmu(pose_data) # animation contains keys: grans, gender, mocap_framerate, betas, dmpls, poses
+        animation = self.load_cmu(pose_data)
         betas = animation['betas'][:10]
         print(f' betas : {betas}')
         poses = animation['poses'][:,:72]
-        poses[:,66:72] = 0.0  # rest hand pose
-        trans = animation['trans']
-        gender = animation['gender'] # male or female
-        gender = 'male' # force gender to male because we imported basicModel_m_lbs_10_207_0_v1.0.2.fbx 
-        mocap_framerate = np.int32(animation['mocap_framerate']) # 120
-        simulation_length = np.min([poses.shape[0], 120]) # simulate maximum 120 frames 
+        poses[:,66:72] = 0.0
+        # Treat trans as optional: use from file if present; otherwise None.
+        # Note: function arg `trans` is kept but not used to override; adjust if you want manual override.
+        trans = animation.get('trans', None)
+
+        gender = animation['gender']
+        gender = 'male'
+        mocap_framerate = np.int32(animation['mocap_framerate'])
+        #simulation_length = np.min([poses.shape[0], 120])
+        simulation_length = poses.shape[0]
         dmpls = animation['dmpls']
-        frame_end = mocap_framerate + simulation_length # frame end point in blender
+        frame_end = mocap_framerate + simulation_length
         print(f' pose shape : {poses.shape}')
         print(f' frame end : {frame_end}')
         print('betas : {0}'.format(betas))
+        if trans is None:
+            print('No translation found; body translation will NOT be applied.')
 
         # extract animation data indexed from 0 to simulation_length
         sim_poses = poses[:simulation_length]
         sim_betas = betas
-        sim_trans = trans[:simulation_length]
         sim_gender = 'male'
         sim_mocap_framerate = mocap_framerate
         sim_dmpls = dmpls[:simulation_length]
+        sim_trans = trans[:simulation_length] if trans is not None else None
 
         bpy.data.scenes["Scene"].frame_end = frame_end
-        # Interpolate skinny shape and rest pose to -30 frame
         skinny_shape = np.array([0, 5, 2, 3, 7, -4, 1, 2, 4, -1], dtype=np.float32)
         rest_pose = np.zeros(72, dtype=np.float32)
         
         last_betas = betas[:10]
         last_pose = poses[0]
-        # interpolate motion from -30 frame to 0 frame
-        interpolated_betas, interpolated_poses = interpolate_motion(skinny_shape, last_betas, \
-                                                                    rest_pose, last_pose, \
-                                                                    num_frames=np.int32(mocap_framerate)) # 1 second
+        interpolated_betas, interpolated_poses = interpolate_motion(
+            skinny_shape, last_betas, rest_pose, last_pose, num_frames=np.int32(mocap_framerate)
+        )
 
-        print("Applying shape and poses...")
-        for i, p in enumerate(interpolated_poses):
-            # apply shape and pose
-            self.apply_shape_pose(interpolated_betas[i], p, frame=i+1) #frame from 1 to 120 is the interpolated motion
-        # apply shape and pose to frame in blender
+        print("Applying shape, poses " + ("and translation " if trans is not None else "") + "(interpolation phase)...")
+        if trans is not None:
+            rest_trans = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+            first_trans = trans[0]
+            interp_len = len(interpolated_poses)
+            for i, p in enumerate(interpolated_poses):
+                alpha = i / (interp_len - 1) if interp_len > 1 else 1.0
+                interpolated_trans = rest_trans * (1 - alpha) + first_trans * alpha
+                self.apply_shape_pose(interpolated_betas[i], p, frame=i+1, trans=interpolated_trans)
+        else:
+            for i, p in enumerate(interpolated_poses):
+                self.apply_shape_pose(interpolated_betas[i], p, frame=i+1, trans=None)
+
+        # Apply shape, pose (and translation if available) for main motion frames
         for i in range(mocap_framerate+1, frame_end + 1):
-            print(f"Applying shape and pose for frame {i}")
-            # apply shape and pose
-            self.apply_shape_pose(betas, poses[i-mocap_framerate-1], frame=i)
-        #for i, p in enumerate(poses):
-        #    # apply shape and pose
-        #    self.apply_shape_pose(betas, p, frame=i+1+mocap_framerate) # frame from 121 to end frame (usually 240) is the cmu motion
+            idx = i - mocap_framerate - 1
+            if trans is not None:
+                print(f"Applying shape, pose and translation for frame {i}")
+                self.apply_shape_pose(betas, poses[idx], frame=i, trans=trans[idx])
+            else:
+                print(f"Applying shape and pose (no translation) for frame {i}")
+                self.apply_shape_pose(betas, poses[idx], frame=i, trans=None)
         print(' Done')
         # Jump to starting point 
         bpy.ops.screen.frame_jump(end=False)
@@ -285,12 +312,16 @@ class SMPLModel():
 
         # export garment obj sequences
         bpy.data.scenes["Scene"].frame_end = frame_end 
-        # create output directory if not exists
         os.makedirs(os.path.join(output_path, npz_file_name), exist_ok=True)
-        # write simulation pose data to npz file
-        np.savez(os.path.join(output_path, npz_file_name, 'animation.npz'),
-                 betas=sim_betas, poses=sim_poses, trans=sim_trans,
-                 gender=sim_gender, mocap_framerate=sim_mocap_framerate, dmpls=sim_dmpls)
+
+        # Save with or without trans
+        save_kwargs = dict(
+            betas=sim_betas, poses=sim_poses,
+            gender=sim_gender, mocap_framerate=sim_mocap_framerate, dmpls=sim_dmpls
+        )
+        if sim_trans is not None:
+            save_kwargs['trans'] = sim_trans
+        np.savez(os.path.join(output_path, npz_file_name, 'animation.npz'), **save_kwargs)
 
         for frame in range(mocap_framerate+1, frame_end + 1):
             bpy_export_obj(tshirt, 
@@ -312,9 +343,9 @@ if __name__ == "__main__":
     # Create instance of SMPLModel
     smpl_model = SMPLModel()
     # demo simulation 
-    #smpl_model.simulate('/home/cxh/Documents/dataset/CMU_SAMPLED/01_01_poses.npz', output_path='/home/cxh/Documents/dataset/CMU_SIMULATION')
+    smpl_model.simulate('/home/cxh/Documents/dataset/CMU_SAMPLED/10_02_poses.npz', output_path='/home/cxh/Documents/dataset/CMU_SIMULATION2')
     # demo visualization
-    smpl_model.visualize('/home/cxh/Documents/dataset/CMU_SAMPLED/05_02_poses.npz')
+    #smpl_model.visualize('/home/cxh/Documents/dataset/CMU_SAMPLED/10_02_poses.npz')
     
 
     ##############################################################################################################
