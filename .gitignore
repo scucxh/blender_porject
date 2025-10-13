@@ -195,3 +195,5 @@ cython_debug/
 output/
 assets/
 .marscode/
+
+.vscode/

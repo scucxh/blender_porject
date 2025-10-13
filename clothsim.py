@@ -309,19 +309,24 @@ if __name__ == "__main__":
     #bproc.init()
 
     # demo usage
-    #smpl_model = SMPLModel()
-    #smpl_model.simulate('/home/cxh/Documents/dataset/CMU_SAMPLED/01_01_poses.npz', output_path='/home/cxh/Documents/dataset/CMU_SIMULATION')
-    #smpl_model.visualize('/home/cxh/Documents/dataset/CMU_SIMULATION/01_01/animation.npz')
     # Create instance of SMPLModel
+    smpl_model = SMPLModel()
+    # demo simulation 
+    #smpl_model.simulate('/home/cxh/Documents/dataset/CMU_SAMPLED/01_01_poses.npz', output_path='/home/cxh/Documents/dataset/CMU_SIMULATION')
+    # demo visualization
+    smpl_model.visualize('/home/cxh/Documents/dataset/CMU_SAMPLED/05_02_poses.npz')
     
-    pose_data_dir = '/home/cxh/Documents/dataset/CMU_SAMPLED'
-    # walk through all npz files in the directory
-    for root, dirs, files in os.walk(pose_data_dir):
-        for file in files:
-            if file.endswith('.npz'):
-                npz_file_path = os.path.join(root, file)
-                print(f'Processing {npz_file_path}')
-                # simulate and export
-                smpl_model = SMPLModel()
-                smpl_model.simulate(npz_file_path, output_path='/home/cxh/Documents/dataset/CMU_SIMULATION')
-    
+
+    ##############################################################################################################
+    #           Simulate all npz files in the directory - Uncomment to run batch simulation                      #
+    ##############################################################################################################
+    #pose_data_dir = '/home/cxh/Documents/dataset/CMU_SAMPLED'
+    ## walk through all npz files in the directory
+    #for root, dirs, files in os.walk(pose_data_dir):
+    #    for file in files:
+    #        if file.endswith('.npz'):
+    #            npz_file_path = os.path.join(root, file)
+    #            print(f'Processing {npz_file_path}')
+    #            # simulate and export
+    #            smpl_model = SMPLModel()
+    #            smpl_model.simulate(npz_file_path, output_path='/home/cxh/Documents/dataset/CMU_SIMULATION')
