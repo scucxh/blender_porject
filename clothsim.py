@@ -205,7 +205,7 @@ class SMPLModel():
         betas = animation['betas'][:10]
         print(f' betas : {betas}')
         poses = animation['poses'][:,:72]
-        #poses[:,66:72] = 0.0
+        poses[:,66:72] = 0.0 # rest hands
         # Treat trans as optional: use from file if present; otherwise None.
         # Note: function arg `trans` is kept but not used to override; adjust if you want manual override.
         trans = animation.get('trans', None)
