@@ -63,8 +63,7 @@ def bpy_export_obj(objname, frame, export_path):
                           apply_modifiers=True,
                           export_materials=False, export_animation=False,
                           export_normals=True, export_uv=False,
-                          
-                          global_scale=0.01)
+                          global_scale=1.0)
 
     bpy.context.scene.frame_set(original_frame)
     bpy.context.view_layer.update()
