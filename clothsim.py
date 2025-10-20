@@ -213,8 +213,8 @@ class SMPLModel():
         gender = animation['gender']
         gender = 'female'
         mocap_framerate = np.int32(animation['mocap_framerate'])
-        #simulation_length = np.min([poses.shape[0], 120])
-        simulation_length = poses.shape[0]
+        simulation_length = np.min([poses.shape[0], 360])
+        #simulation_length = poses.shape[0]
         dmpls = animation['dmpls']
         frame_end = mocap_framerate + simulation_length
         print(f' pose shape : {poses.shape}')
