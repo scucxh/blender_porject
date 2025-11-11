@@ -6,6 +6,7 @@ import math
 import os
 from scipy.spatial.transform import Rotation as R
 import h5py
+import pickle
 
 # Load obj file
 def load_obj(filename, tex_coords=False):
@@ -90,6 +91,18 @@ def load_cmu(pose_path:str):
     # print mocap_framerate
     print(f"mocap_framerate: {animation['mocap_frame_rate']}")
     return animation
+
+# obtain smpl pose data from pkl  file
+def smpl_poses_from_hood_pkl(file_path='/home/cxh/Documents/sources/hood_data/validation_sequences/pose_sequences/01_01.pkl'):
+    with open(file_path, 'rb') as f:
+        data = pickle.load(f)
+    print('smpl pose shape: ', data['body_pose'].shape)
+    print('global_orient shape: ', data['global_orient'].shape)
+    print(' transl shape: ', data['transl'].shape)
+    print(' betas shape: ', data['betas'])
+    print(' n_steps: ', data['n_steps'])
+    print(' timestep: ', data['timestep'])
+    return data
 
 def separate_arms(poses, angle=20, left_arm=17, right_arm=16):
     num_joints = poses.shape[-1] //3
