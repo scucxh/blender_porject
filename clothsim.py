@@ -8,7 +8,7 @@ import math
 import numpy as np
 from types import SimpleNamespace as SN
 from mathutils import Matrix, Vector, Quaternion, Euler
-from utils import load_motion, read_hdf5, interpolate_motion, bpy_export_obj
+from utils import load_motion, read_hdf5, interpolate_motion, bpy_export_obj, smpl_poses_from_hood_pkl
 
 # SMPL body model
 class SMPLModel():
@@ -41,7 +41,7 @@ class SMPLModel():
             23: (21, 'R_Hand')
         }
         self.n_bones = 24 # number of bones
-        self.gender = 'f' #or 'f' 
+        self.gender = 'm' #or 'f' 
         self.betas = np.zeros(10, dtype=np.float32)  # smpl shape parameters
         self.pose = np.zeros(72, dtype=np.float32)  # smpl pose parameters 
         self.pose[66:72] = 0.0 # rest hand
@@ -124,8 +124,8 @@ class SMPLModel():
             mpose[i] = mrot
             bone = self.armature.pose.bones[self.bone_name(i, bodyname=f'{self.gender}_avg')]
             # Skip rotation for root (0) and next joint (1) to preserve hierarchy as in original code
-            if i <= 1:
-                continue
+            #if i <= 1:
+            #    continue
             bone.rotation_quaternion = Matrix(mrot).to_quaternion()
             bone.keyframe_insert('rotation_quaternion', frame=frame)
         for ibeta, val in enumerate(beta):
@@ -213,8 +213,8 @@ class SMPLModel():
         gender = animation['gender']
         gender = 'female'
         mocap_framerate = np.int32(animation['mocap_framerate'])
-        simulation_length = np.min([poses.shape[0], 360])
-        #simulation_length = poses.shape[0]
+        #simulation_length = np.min([poses.shape[0], 360])
+        simulation_length = poses.shape[0]
         dmpls = animation['dmpls']
         frame_end = mocap_framerate + simulation_length
         print(f' pose shape : {poses.shape}')
@@ -232,8 +232,8 @@ class SMPLModel():
         sim_trans = trans[:simulation_length] if trans is not None else None
         sim_trans = 0.0
         bpy.data.scenes["Scene"].frame_end = frame_end
-        #skinny_shape = np.array([0, 3, 2, 3, 7, -4, 1, 2, 4, -1], dtype=np.float32) # for female
-        skinny_shape = np.zeros(10, dtype=np.float32) # neutral shape
+        skinny_shape = np.array([0, 5, 2, 3, 7, -4, 1, 2, 4, -1], dtype=np.float32) # for female
+        #skinny_shape = np.zeros(10, dtype=np.float32) # neutral shape
         #skinny_shape = np.array([0, 5, 2, 3, 7, -4, 1, 2, 4, -1], dtype=np.float32) # for male
         rest_pose = np.zeros(72, dtype=np.float32)
         
@@ -279,7 +279,7 @@ class SMPLModel():
         self.deselect()
         # import cloth to blender
         #bpy.ops.import_scene.obj(filepath='assets/meshes/tshirt_snug.obj') # for version 3.x
-        bpy.ops.wm.obj_import(filepath='assets/meshes/dress_snug.obj') # for version 4.x
+        bpy.ops.wm.obj_import(filepath='assets/meshes/tshirt_snug.obj') # for version 4.x
         dress= bpy.data.objects['dress']
         dress.select_set(True) # select tshirt
         # set physical properties
@@ -347,7 +347,7 @@ if __name__ == "__main__":
     # Create instance of SMPLModel
     smpl_model = SMPLModel()
     # demo simulation 
-    #smpl_model.simulate('/home/cxh/Documents/dataset/CMU_SAMPLED/10_02_poses.npz', output_path='/home/cxh/Documents/dataset/CMU_SIMULATION3')
+    smpl_model.simulate('/home/cxh/Documents/dataset/CMU_SAMPLED/05_02_poses.npz', output_path='/home/cxh/Documents/dataset/CMU_SIMULATION3')
     # demo visualization
     #smpl_model.visualize('/home/cxh/Documents/dataset/CMU_SAMPLED/10_02_poses.npz')
     
@@ -355,13 +355,13 @@ if __name__ == "__main__":
     ##############################################################################################################
     #           Simulate all npz files in the directory - Uncomment to run batch simulation                      #
     ##############################################################################################################
-    pose_data_dir = '/home/cxh/Documents/dataset/CMU_SAMPLED3'
-    # walk through all npz files in the directory
-    for root, dirs, files in os.walk(pose_data_dir):
-        for file in files:
-            if file.endswith('.npz'):
-                npz_file_path = os.path.join(root, file)
-                print(f'Processing {npz_file_path}')
-                # simulate and export
-                smpl_model = SMPLModel()
-                smpl_model.simulate(npz_file_path, output_path='/home/cxh/Documents/dataset/CMU_SIMULATION3')
+    #pose_data_dir = '/home/cxh/Documents/dataset/CMU_SAMPLED3'
+    ## walk through all npz files in the directory
+    #for root, dirs, files in os.walk(pose_data_dir):
+    #    for file in files:
+    #        if file.endswith('.npz'):
+    #            npz_file_path = os.path.join(root, file)
+    #            print(f'Processing {npz_file_path}')
+    #            # simulate and export
+    #            smpl_model = SMPLModel()
+    #            smpl_model.simulate(npz_file_path, output_path='/home/cxh/Documents/dataset/CMU_SIMULATION3')
