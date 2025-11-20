@@ -41,14 +41,14 @@ class SMPLModel():
             23: (21, 'R_Hand')
         }
         self.n_bones = 24 # number of bones
-        self.gender = 'm' #or 'f' 
+        self.gender = 'f' #or 'm' 
         self.betas = np.zeros(10, dtype=np.float32)  # smpl shape parameters
         self.pose = np.zeros(72, dtype=np.float32)  # smpl pose parameters 
         self.pose[66:72] = 0.0 # rest hand
 
         # Load fbx basic model
         bpy.ops.import_scene.fbx(filepath=os.path.join('assets/model', 
-                                                       f'basicModel_{self.gender}_lbs_10_207_0_v1.0.3.fbx'),
+                                                       f'basicModel_{self.gender}_lbs_10_207_0_v1.0.2.fbx'),
                                                        axis_forward='-Z', axis_up='Y', 
                                                        global_scale=1)
         
@@ -113,7 +113,7 @@ class SMPLModel():
             pelvis = self.armature.pose.bones[self.bone_name(0, bodyname=f'{self.gender}_avg')]
             if trans is not None:
                 # Scale meters to Blender scale (armature scaled x100)
-                pelvis.location = [0.0, 0.0, 0.0] #(trans * 1.0).tolist()
+                pelvis.location = [0.0, 0.0, 0.0]#(trans * 1.0).tolist()
             else:
                 pelvis.location = [0.0, 0.0, 0.0]
             pelvis.keyframe_insert('location', frame=frame)
@@ -338,6 +338,154 @@ class SMPLModel():
         bpy.ops.ptcache.free_bake_all()
         # Reset to default state
         bpy.ops.wm.read_homefile()
+    def simulate_pkl(self, pose_data:str, output_path:str, trans=None):
+        """
+        Visualize and simulate the SMPLH pose data from an pkl file from HOOD data.
+        simulation settings:
+        cloth: preset cotton, collision quality 5, self-collision checked, solidify modifier added, 
+                thickness is set to 0.1 m (1 mm in actual world due to scale)
+        smpl body set collision quality to default
+        """
+        animation = smpl_poses_from_hood_pkl(pose_data)
+        body_pose = animation['body_pose']
+        global_orient = animation['global_orient']
+        poses = np.concatenate([global_orient, body_pose], axis=1)
+        betas = animation['betas']
+        print(f' betas : {betas}')
+        #betas = np.zeros(10, dtype=np.float32)
+        #poses = animation['poses'][:,:72]
+        poses[:,66:72] = 0.0 # rest hands
+        # Treat trans as optional: use from file if present; otherwise None.
+        # Note: function arg `trans` is kept but not used to override; adjust if you want manual override.
+        trans = animation['transl']
+        #gender = animation['gender']
+        gender = 'female'
+        mocap_framerate = 120 #np.int32(animation['mocap_framerate'])
+        #simulation_length = np.min([poses.shape[0], 360])
+        simulation_length = poses.shape[0]
+        #dmpls = animation['dmpls']
+        frame_end = mocap_framerate + simulation_length
+        print(f' pose shape : {poses.shape}')
+        print(f' frame end : {frame_end}')
+        print('betas : {0}'.format(betas))
+        if trans is None:
+            print('No translation found; body translation will NOT be applied.')
+
+        # extract animation data indexed from 0 to simulation_length
+        sim_poses = poses[:simulation_length]
+        sim_betas = betas
+        #sim_gender = gender 
+        sim_mocap_framerate = mocap_framerate
+        #sim_dmpls = dmpls[:simulation_length]
+        sim_trans = trans[:simulation_length] if trans is not None else None
+        #sim_trans = 0.0
+        bpy.data.scenes["Scene"].frame_end = frame_end
+        skinny_shape = np.array([0, 5, 2, 3, 7, -4, 1, 2, 4, -1], dtype=np.float32) # for female
+        #skinny_shape = np.zeros(10, dtype=np.float32) # neutral shape
+        #skinny_shape = np.array([0, 5, 2, 3, 7, -4, 1, 2, 4, -1], dtype=np.float32) # for male
+        rest_pose = np.zeros(72, dtype=np.float32)
+        
+        last_betas = betas[:10]
+        last_pose = poses[0]
+        interpolated_betas, interpolated_poses = interpolate_motion(
+            skinny_shape, last_betas, rest_pose, last_pose, num_frames=np.int32(mocap_framerate)
+        )
+
+        print("Applying shape, poses " + ("and translation " if trans is not None else "") + "(interpolation phase)...")
+        if trans is not None:
+            rest_trans = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+            first_trans = trans[0]
+            interp_len = len(interpolated_poses)
+            for i, p in enumerate(interpolated_poses):
+                alpha = i / (interp_len - 1) if interp_len > 1 else 1.0
+                interpolated_trans = rest_trans * (1 - alpha) + first_trans * alpha
+                self.apply_shape_pose(interpolated_betas[i], p, frame=i+1, trans=interpolated_trans)
+        else:
+            for i, p in enumerate(interpolated_poses):
+                self.apply_shape_pose(interpolated_betas[i], p, frame=i+1, trans=None)
+
+        # Apply shape, pose (and translation if available) for main motion frames
+        for i in range(mocap_framerate+1, frame_end + 1):
+            idx = i - mocap_framerate - 1
+            if trans is not None:
+                print(f"Applying shape, pose and translation for frame {i}")
+                self.apply_shape_pose(betas, poses[idx], frame=i, trans=trans[idx])
+            else:
+                print(f"Applying shape and pose (no translation) for frame {i}")
+                self.apply_shape_pose(betas, poses[idx], frame=i, trans=None)
+        print(' Done')
+        # Jump to starting point 
+        bpy.ops.screen.frame_jump(end=False)
+        self.deselect()
+        avg = bpy.data.objects[self.obname]
+        avg.select_set(True)
+        bpy.context.view_layer.objects.active = avg
+        # add collision modifier 
+        bpy.ops.object.modifier_add(type='COLLISION')
+        bpy.ops.object.modifier_add(type='TRIANGULATE')
+
+        self.deselect()
+        # import cloth to blender
+        #bpy.ops.import_scene.obj(filepath='assets/meshes/tshirt_snug.obj') # for version 3.x
+        bpy.ops.wm.obj_import(filepath='assets/meshes/tshirt_hood.obj') # for version 4.x
+        dress= bpy.data.objects['dress']
+        dress.select_set(True) # select tshirt
+        # set physical properties
+        bpy.context.view_layer.objects.active = dress
+        bpy.ops.object.modifier_add(type='CLOTH')
+        bpy.context.object.modifiers['Cloth'].settings.quality = 5
+        bpy.context.object.modifiers['Cloth'].settings.tension_stiffness = 15
+        bpy.context.object.modifiers['Cloth'].settings.compression_stiffness = 15
+        bpy.context.object.modifiers['Cloth'].settings.shear_stiffness = 5
+        bpy.context.object.modifiers['Cloth'].settings.bending_stiffness = 0.5
+        bpy.context.object.modifiers['Cloth'].collision_settings.use_self_collision = True
+        bpy.context.object.modifiers['Cloth'].collision_settings.collision_quality = 10
+        bpy.ops.object.modifier_add(type='COLLISION')
+        
+        #bpy.ops.object.modifier_add(type='SOLIDIFY') # add solidify modifier 
+        #bpy.context.object.modifiers["Solidify"].thickness = 0.1 # 1 mm thickness
+
+        # Bake
+        bpy.context.scene.render.engine = 'CYCLES'
+        bpy.context.scene.cycles.device = 'CPU'  
+        bpy.context.object.modifiers['Cloth'].point_cache.frame_end = frame_end
+        print("Baking...")
+        for scene in bpy.data.scenes:
+            for object in scene.objects:
+                for modifier in object.modifiers:
+                    if modifier.type == 'CLOTH':
+                        #override = {'scene': scene, 'active_object': object, 'point_cache': modifier.point_cache}
+                        with bpy.context.temp_override(scene=scene, object=object, point_cache=modifier.point_cache):
+                            bpy.ops.ptcache.bake(bake=True)
+                        break
+                        # end bake
+        print('Done')
+        self.deselect()
+
+        # export garment obj sequences
+        bpy.data.scenes["Scene"].frame_end = frame_end 
+        os.makedirs(os.path.join(output_path, 'pkl_01_01'), exist_ok=True)
+
+        # Save with or without trans
+        save_kwargs = dict(
+            betas=sim_betas, poses=sim_poses,
+            gender=sim_gender, mocap_framerate=sim_mocap_framerate
+        )
+        if sim_trans is not None:
+            save_kwargs['trans'] = sim_trans
+        np.savez(os.path.join(output_path, 'pkl_01_01', 'animation.npz'), **save_kwargs)
+
+        for frame in range(mocap_framerate+1, frame_end + 1):
+            bpy_export_obj(dress, 
+                           frame=frame, 
+                           export_path=os.path.join(output_path, 'pkl_01_01', f'dress_{frame-mocap_framerate-1:04d}.obj'))
+            bpy_export_obj(avg, 
+                           frame=frame, 
+                           export_path=os.path.join(output_path, 'pkl_01_01', f'body_{frame-mocap_framerate-1:04d}.obj'))
+        # free memory
+        bpy.ops.ptcache.free_bake_all()
+        # Reset to default state
+        bpy.ops.wm.read_homefile()
 
 if __name__ == "__main__":
     # initialize BlenderProc
@@ -347,7 +495,9 @@ if __name__ == "__main__":
     # Create instance of SMPLModel
     smpl_model = SMPLModel()
     # demo simulation 
-    smpl_model.simulate('/home/cxh/Documents/dataset/CMU_SAMPLED/05_02_poses.npz', output_path='/home/cxh/Documents/dataset/CMU_SIMULATION3')
+    #smpl_model.simulate('/home/cxh/Documents/dataset/CMU_SAMPLED/05_02_poses.npz', output_path='/home/cxh/Documents/dataset/CMU_SIMULATION3')
+    pkl_file_name = '/home/cxh/Documents/sources/hood_data/validation_sequences/pose_sequences/05_08.pkl'
+    smpl_model.simulate_pkl(pkl_file_name, output_path='/home/cxh/Documents/blender_output/our_simulation')
     # demo visualization
     #smpl_model.visualize('/home/cxh/Documents/dataset/CMU_SAMPLED/10_02_poses.npz')
     
